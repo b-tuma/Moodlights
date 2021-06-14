@@ -21,6 +21,8 @@
 #include <OneButton.h>
 #include <BlynkSimpleStream.h>
 #include <ESP8266WiFi.h>
+#include <math.h>
+#include <main.h>
 
 const uint16_t RGBW_PixelCount = 44;
 const uint16_t RGB_PixelCount = 150;
@@ -67,7 +69,8 @@ void connectWiFi()
   }
 }
 
-
+int lower_middle_HSVW[4];
+int lower_sides_HSVW[4];
 int middle_RGB[3];
 int sides_RGB[3];
 int upper_RGB[3];
@@ -79,7 +82,7 @@ bool updateUpper = false;
 
 int middle_RGBW[4];
 int sides_RGBW[4];
-float globalIntensity_lower = 1.0;
+int globalIntensity_lower = 100;
 bool updateLower = false;
 
 BLYNK_WRITE(V0) // Middle_RGB_Lower
@@ -94,7 +97,7 @@ BLYNK_WRITE(V0) // Middle_RGB_Lower
 BLYNK_WRITE(V1) // Middle_W_Lower
 {
     isOn_lower = true;
-    middle_RGBW[3] = param.asInt();
+    lower_middle_HSVW[3] = param.asInt();
     updateLower = true;
 }
 
@@ -110,10 +113,51 @@ BLYNK_WRITE(V2) // Middle_RGB_Lower
 BLYNK_WRITE(V3) // Middle_W_Lower
 {
     isOn_lower = true;
-    sides_RGBW[3] = param.asInt();
+    lower_sides_HSVW[3] = param.asInt();
     updateLower = true;
 }
 
+BLYNK_WRITE(V20)
+{
+    isOn_lower = true;
+    lower_middle_HSVW[0] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V21)
+{
+    isOn_lower = true;
+    lower_middle_HSVW[1] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V22)
+{
+    isOn_lower = true;
+    lower_middle_HSVW[2] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V23)
+{
+    isOn_lower = true;
+    lower_sides_HSVW[0] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V24)
+{
+    isOn_lower = true;
+    lower_sides_HSVW[1] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V25)
+{
+    isOn_lower = true;
+    lower_sides_HSVW[2] = param.asInt();
+    updateLower = true;
+}
 
 BLYNK_WRITE(V4) // Middle_RGB_Upper
 {
@@ -174,7 +218,7 @@ BLYNK_WRITE(V10) // Middle_RGB_Upper
 BLYNK_WRITE(V11) // Middle_RGB_Upper
 {
     isOn_lower = true;
-    globalIntensity_lower = param.asFloat();
+    globalIntensity_lower = param.asInt();
     old_globalIntensity_lower = globalIntensity_lower;
     updateLower = true;
 }
@@ -188,6 +232,73 @@ int easeInOutSine(int start, int finish, float position)
 }
 
 
+// from 0 to 100
+// Based on https://www.alanzucconi.com/2016/01/06/colour-interpolation/
+HsvwColor lerpHSVW(int *startColor, int *endColor, int position)
+{
+    // Hue interpolation
+    int h = 0;
+    int startHue = startColor[0];
+    int endHue = endColor[0];
+    int distance = endHue - startHue;
+    if (startHue > endHue)
+    {
+        // Swap (startColor Hue, endColor Hue)
+        endHue = startColor[0];
+        startHue = endColor[0];
+
+        distance = -distance;
+        position = 100 - position;
+    }
+
+    if(distance > 127) // 180deg
+    {
+        startHue = startHue + 255; // 360deg
+        h = (startHue + (position * (endHue - startHue))/100) % 255; // 360deg
+    }
+    if(distance <= 127) // 180deg
+    {
+        h = startHue + (position * distance)/100;
+    }
+    return HsvwColor(h,
+                    startColor[1] + (position * (endColor[1] - startColor[1]))/100,
+                    (startColor[2] + (position * (endColor[2] - startColor[2]))/100)*globalIntensity_lower/100,
+                    (startColor[3] + (position * (endColor[3] - startColor[3]))/100)*globalIntensity_lower/100
+                    );
+}
+
+RgbwColor HsvToRgbw(HsvwColor hsvwColor)
+{
+    unsigned char region, remainder, p, q, t;
+
+    if (hsvwColor.S == 0)
+    {
+        return RgbwColor(hsvwColor.V);
+    }
+
+    region = hsvwColor.H / 43;
+    remainder = (hsvwColor.H - (region * 43)) * 6; 
+
+    p = (hsvwColor.V * (255 - hsvwColor.S)) >> 8;
+    q = (hsvwColor.V * (255 - ((hsvwColor.S * remainder) >> 8))) >> 8;
+    t = (hsvwColor.V * (255 - ((hsvwColor.S * (255 - remainder)) >> 8))) >> 8;
+
+    switch (region)
+    {
+        case 0:
+            return RgbwColor(hsvwColor.V, t, p, hsvwColor.W);
+        case 1:
+            return RgbwColor(q, hsvwColor.V, p, hsvwColor.W);
+        case 2:
+            return RgbwColor(p, hsvwColor.V, t, hsvwColor.W);
+        case 3:
+            return RgbwColor(p, q, hsvwColor.V, hsvwColor.W);
+        case 4:
+            return RgbwColor(t, p, hsvwColor.V, hsvwColor.W);
+        default:
+            return RgbwColor(hsvwColor.V, p, q, hsvwColor.W);
+    }
+}
 
 void click_left()
 {
@@ -239,7 +350,7 @@ void doubleClick_right()
     if(isOn_lower)
     {
         updateLower = true;
-        globalIntensity_lower = BlynkMathClamp(globalIntensity_lower + 0.1, 0.0, 1.0);
+        globalIntensity_lower = BlynkMathClamp(globalIntensity_lower + 10, 0, 100);
         
     }
     
@@ -266,7 +377,7 @@ void click_right()
     {
         isOn_lower = false;
         old_globalIntensity_lower = globalIntensity_lower;
-        globalIntensity_lower = 0.0;
+        globalIntensity_lower = 0;
         updateLower = true;
     }
     else
@@ -340,15 +451,21 @@ void loop()
   if(updateLower)
   {
       updateLower = false;
+
       for (size_t i = 0; i < RGBW_PixelCount; i++)
       {
-          float currentCompletion = (i*2.0)/RGBW_PixelCount;
-          RgbwColor newColor(
+          int currentCompletion = (i/(float)RGBW_PixelCount)*200;
+          if (currentCompletion > 100) currentCompletion = 200 - currentCompletion;
+          HsvwColor hsvwColor = lerpHSVW(lower_middle_HSVW, lower_sides_HSVW, currentCompletion);
+          RgbwColor color = HsvToRgbw(hsvwColor);
+          //RgbwColor convertedColor(color);
+          /* RgbwColor newColor(
             easeInOutSine(middle_RGBW[0], sides_RGBW[0], currentCompletion) * globalIntensity_lower,
             easeInOutSine(middle_RGBW[1], sides_RGBW[1], currentCompletion) * globalIntensity_lower,
             easeInOutSine(middle_RGBW[2], sides_RGBW[2], currentCompletion) * globalIntensity_lower,
             easeInOutSine(middle_RGBW[3], sides_RGBW[3], currentCompletion) * globalIntensity_lower);
-          strip_lower.SetPixelColor(i,newColor);
+          strip_lower.SetPixelColor(i,newColor); */
+          strip_lower.SetPixelColor(i, color);
       }
       strip_lower.Show();
   }
@@ -417,7 +534,7 @@ void loop()
           previousMillis_right = currentMillis_right;
 
           updateLower = true;
-          globalIntensity_lower = BlynkMathClamp(globalIntensity_lower - 0.1, 0.0, 1.0);
+          globalIntensity_lower = BlynkMathClamp(globalIntensity_lower - 10, 0, 100);
       }
   }
 
