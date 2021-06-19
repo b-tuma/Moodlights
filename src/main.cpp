@@ -44,9 +44,9 @@ const char* wifi_pass = "wifi_Password";
 
 
 float old_globalIntensity_upper;
-float old_globalIntensity_lower;
+
 bool isOn_upper = true;
-bool isOn_lower = true;
+
 
 WiFiClient wifiClient;
 
@@ -69,11 +69,19 @@ void connectWiFi()
   }
 }
 
-int lower_middle_HSVW[4];
-int lower_sides_HSVW[4];
-int middle_RGB[3];
-int sides_RGB[3];
-int upper_RGB[3];
+int lower_HSVW_2[4];
+int lower_HSVW_1[4];
+int lower_global_intensity = 100;
+bool lower_colorshift = false;
+int lower_colorshift_duration = 3000;
+bool lower_on = true;
+int lower_global_intensity_old;
+int lower_division_factor = 2;
+uint8_t lower_transition_array[RGBW_PixelCount];
+
+int upper_HSV_1[3];
+int upper_HSV_2[3];
+int upper_HSV_3[3];
 float intensity1;
 float intensity2;
 float intensity3;
@@ -82,147 +90,8 @@ bool updateUpper = false;
 
 int middle_RGBW[4];
 int sides_RGBW[4];
-int globalIntensity_lower = 100;
+
 bool updateLower = false;
-
-BLYNK_WRITE(V0) // Middle_RGB_Lower
-{
-    isOn_lower = true;
-    middle_RGBW[0] = param[0].asInt();
-    middle_RGBW[1] = param[1].asInt();
-    middle_RGBW[2] = param[2].asInt();
-    updateLower = true;
-}
-
-BLYNK_WRITE(V1) // Middle_W_Lower
-{
-    isOn_lower = true;
-    lower_middle_HSVW[3] = param.asInt();
-    updateLower = true;
-}
-
-BLYNK_WRITE(V2) // Middle_RGB_Lower
-{
-    isOn_lower = true;
-    sides_RGBW[0] = param[0].asInt();
-    sides_RGBW[1] = param[1].asInt();
-    sides_RGBW[2] = param[2].asInt();
-    updateLower = true;
-}
-
-BLYNK_WRITE(V3) // Middle_W_Lower
-{
-    isOn_lower = true;
-    lower_sides_HSVW[3] = param.asInt();
-    updateLower = true;
-}
-
-BLYNK_WRITE(V20)
-{
-    isOn_lower = true;
-    lower_middle_HSVW[0] = param.asInt();
-    updateLower = true;
-}
-
-BLYNK_WRITE(V21)
-{
-    isOn_lower = true;
-    lower_middle_HSVW[1] = param.asInt();
-    updateLower = true;
-}
-
-BLYNK_WRITE(V22)
-{
-    isOn_lower = true;
-    lower_middle_HSVW[2] = param.asInt();
-    updateLower = true;
-}
-
-BLYNK_WRITE(V23)
-{
-    isOn_lower = true;
-    lower_sides_HSVW[0] = param.asInt();
-    updateLower = true;
-}
-
-BLYNK_WRITE(V24)
-{
-    isOn_lower = true;
-    lower_sides_HSVW[1] = param.asInt();
-    updateLower = true;
-}
-
-BLYNK_WRITE(V25)
-{
-    isOn_lower = true;
-    lower_sides_HSVW[2] = param.asInt();
-    updateLower = true;
-}
-
-BLYNK_WRITE(V4) // Middle_RGB_Upper
-{
-    isOn_upper = true;
-    middle_RGB[0] = param[0].asInt();
-    middle_RGB[1] = param[1].asInt();
-    middle_RGB[2] = param[2].asInt();
-    updateUpper = true;
-}
-
-BLYNK_WRITE(V5) // Sides_RGB_Upper
-{
-    isOn_upper = true;
-    sides_RGB[0] = param[0].asInt();
-    sides_RGB[1] = param[1].asInt();
-    sides_RGB[2] = param[2].asInt();
-    updateUpper = true;
-}
-
-BLYNK_WRITE(V6) // Middle_RGB_Upper
-{
-    isOn_upper = true;
-    upper_RGB[0] = param[0].asInt();
-    upper_RGB[1] = param[1].asInt();
-    upper_RGB[2] = param[2].asInt();
-    updateUpper = true;
-}
-
-BLYNK_WRITE(V7) // Middle_RGB_Upper
-{
-    isOn_upper = true;
-    intensity1 = param.asFloat();
-    updateUpper = true;
-}
-
-BLYNK_WRITE(V8) // Middle_RGB_Upper
-{
-    isOn_upper = true;
-    intensity2 = param.asFloat();
-    updateUpper = true;
-}
-
-BLYNK_WRITE(V9) // Middle_RGB_Upper
-{
-    isOn_upper = true;
-    intensity3 = param.asFloat();
-    updateUpper = true;
-}
-
-BLYNK_WRITE(V10) // Middle_RGB_Upper
-{
-    isOn_upper = true;
-    globalIntensity_upper = param.asFloat();
-    old_globalIntensity_upper = globalIntensity_upper;
-    updateUpper = true;
-}
-
-BLYNK_WRITE(V11) // Middle_RGB_Upper
-{
-    isOn_lower = true;
-    globalIntensity_lower = param.asInt();
-    old_globalIntensity_lower = globalIntensity_lower;
-    updateLower = true;
-}
-
 
 
 int easeInOutSine(int start, int finish, float position)
@@ -231,8 +100,21 @@ int easeInOutSine(int start, int finish, float position)
     return floor((finish - start) * (-(cos(PI * newPos) - 1) / 2)) + start;
 }
 
+int linearEasing(int position, int startValue, int change, int duration)
+{
+    return startValue + (position*change)/duration;
+}
 
-// from 0 to 100
+int linearEasingf(int position, int startValue, int change)
+{
+    return (startValue + (position*change)/255.) + 0.5;
+}
+
+uint8_t inOutSine8(int position,float duration)
+{
+    return (-127.5 * (cos(PI*position/duration)-1)) + 0.5;
+}
+
 // Based on https://www.alanzucconi.com/2016/01/06/colour-interpolation/
 HsvwColor lerpHSVW(int *startColor, int *endColor, int position)
 {
@@ -248,22 +130,22 @@ HsvwColor lerpHSVW(int *startColor, int *endColor, int position)
         startHue = endColor[0];
 
         distance = -distance;
-        position = 100 - position;
+        position = 255 - position;
     }
 
     if(distance > 127) // 180deg
     {
         startHue = startHue + 255; // 360deg
-        h = (startHue + (position * (endHue - startHue))/100) % 255; // 360deg
+        h = linearEasingf(position, startHue, (endHue - startHue)) % 255;
     }
     if(distance <= 127) // 180deg
     {
-        h = startHue + (position * distance)/100;
+        h = linearEasingf(position, startHue, distance);
     }
     return HsvwColor(h,
-                    startColor[1] + (position * (endColor[1] - startColor[1]))/100,
-                    (startColor[2] + (position * (endColor[2] - startColor[2]))/100)*globalIntensity_lower/100,
-                    (startColor[3] + (position * (endColor[3] - startColor[3]))/100)*globalIntensity_lower/100
+                    linearEasingf(position,startColor[1],(endColor[1] - startColor[1])),
+                    linearEasingf(position,startColor[2],(endColor[2] - startColor[2]))*lower_global_intensity/100,
+                    linearEasingf(position,startColor[3],(endColor[3] - startColor[3]))*lower_global_intensity/100
                     );
 }
 
@@ -347,10 +229,10 @@ void longEnd_left()
 
 void doubleClick_right()
 {
-    if(isOn_lower)
+    if(lower_on)
     {
         updateLower = true;
-        globalIntensity_lower = BlynkMathClamp(globalIntensity_lower + 10, 0, 100);
+        lower_global_intensity = BlynkMathClamp(lower_global_intensity + 10, 0, 100);
         
     }
     
@@ -360,7 +242,7 @@ bool long_right;
 
 void longClick_right()
 {
-    if(isOn_lower)
+    if(lower_on)
     {
         long_right = true;
     }
@@ -373,37 +255,30 @@ void longEnd_right()
 
 void click_right()
 {
-    if(isOn_lower)
+    if(lower_on)
     {
-        isOn_lower = false;
-        old_globalIntensity_lower = globalIntensity_lower;
-        globalIntensity_lower = 0;
+        lower_on = false;
+        lower_global_intensity_old = lower_global_intensity;
+        lower_global_intensity = 0;
         updateLower = true;
     }
     else
     {
-        isOn_lower = true;
-        globalIntensity_lower = old_globalIntensity_lower;
+        lower_on = true;
+        lower_global_intensity = lower_global_intensity_old;
         updateLower = true;
     }
 }
 
-
-BLYNK_WRITE(V12) // Middle_RGB_Upper
+void update_lower_transition()
 {
-    if(param.asInt() == 1)
+    float duration = RGBW_PixelCount/lower_division_factor;
+    for (size_t i = 0; i < RGBW_PixelCount; i++)
     {
-        click_left();
+        uint8_t value = inOutSine8(i, duration);
+        lower_transition_array[i] = constrain(value,0,255);
     }
     
-}
-
-BLYNK_WRITE(V13) // Middle_RGB_Upper
-{
-    if(param.asInt() == 1)
-    {
-        click_right();
-    }
 }
 
 void setup()
@@ -426,11 +301,63 @@ void setup()
     button_right.attachDoubleClick(doubleClick_right);
     button_right.attachLongPressStart(longClick_right);
     button_right.attachLongPressStop(longEnd_right);
+    update_lower_transition();
 }
 
 unsigned long previousMillis_left = 0;
 unsigned long previousMillis_right = 0;
 const long interval = 500;  
+
+
+
+void lower_strip_loop()
+{
+    for (size_t i = 0; i < RGBW_PixelCount; i++)
+      {
+          HsvwColor hsvwColor = lerpHSVW(lower_HSVW_2, lower_HSVW_1, lower_transition_array[i]);
+          RgbwColor color = HsvToRgbw(hsvwColor);
+          strip_lower.SetPixelColor(i, color);
+      }
+      strip_lower.Show();
+}
+
+void upper_strip_loop()
+{
+    for (size_t i = 0; i < RGB_PixelCount; i++)
+      {
+          if(i > 100)
+          {
+              float currentCompletion = ((i-100)*2.0)/50.0;
+              RgbColor newColor(
+                BlynkMathClamp(easeInOutSine(upper_HSV_1[0], upper_HSV_2[0], currentCompletion) + (upper_HSV_3[0] * intensity3),0,255) * globalIntensity_upper,
+                BlynkMathClamp(easeInOutSine(upper_HSV_1[1], upper_HSV_2[1], currentCompletion) + (upper_HSV_3[1] * intensity3),0,255) * globalIntensity_upper,
+                BlynkMathClamp(easeInOutSine(upper_HSV_1[2], upper_HSV_2[2], currentCompletion) + (upper_HSV_3[2] * intensity3),0,255) * globalIntensity_upper
+              );
+              strip_upper.SetPixelColor(i, newColor);
+          }
+          else if (i > 50)
+          {
+              float currentCompletion = ((i-50)*2.0)/50.0;
+              RgbColor newColor(
+                BlynkMathClamp(easeInOutSine(upper_HSV_1[0], upper_HSV_2[0], currentCompletion) + (upper_HSV_3[0] * intensity2),0,255) * globalIntensity_upper,
+                BlynkMathClamp(easeInOutSine(upper_HSV_1[1], upper_HSV_2[1], currentCompletion) + (upper_HSV_3[1] * intensity2),0,255) * globalIntensity_upper,
+                BlynkMathClamp(easeInOutSine(upper_HSV_1[2], upper_HSV_2[2], currentCompletion) + (upper_HSV_3[2] * intensity2),0,255) * globalIntensity_upper
+              );
+              strip_upper.SetPixelColor(i, newColor);
+          }
+          else
+          {
+              float currentCompletion = ((i)*2.0)/50.0;
+              RgbColor newColor(
+                BlynkMathClamp(easeInOutSine(upper_HSV_1[0], upper_HSV_2[0], currentCompletion) + (upper_HSV_3[0] * intensity1),0,255) * globalIntensity_upper,
+                BlynkMathClamp(easeInOutSine(upper_HSV_1[1], upper_HSV_2[1], currentCompletion) + (upper_HSV_3[1] * intensity1),0,255) * globalIntensity_upper,
+                BlynkMathClamp(easeInOutSine(upper_HSV_1[2], upper_HSV_2[2], currentCompletion) + (upper_HSV_3[2] * intensity1),0,255) * globalIntensity_upper
+              );
+              strip_upper.SetPixelColor(i, newColor);
+          }
+      }
+      strip_upper.Show();
+}
 
 void loop()
 {
@@ -451,62 +378,13 @@ void loop()
   if(updateLower)
   {
       updateLower = false;
-
-      for (size_t i = 0; i < RGBW_PixelCount; i++)
-      {
-          int currentCompletion = (i/(float)RGBW_PixelCount)*200;
-          if (currentCompletion > 100) currentCompletion = 200 - currentCompletion;
-          HsvwColor hsvwColor = lerpHSVW(lower_middle_HSVW, lower_sides_HSVW, currentCompletion);
-          RgbwColor color = HsvToRgbw(hsvwColor);
-          //RgbwColor convertedColor(color);
-          /* RgbwColor newColor(
-            easeInOutSine(middle_RGBW[0], sides_RGBW[0], currentCompletion) * globalIntensity_lower,
-            easeInOutSine(middle_RGBW[1], sides_RGBW[1], currentCompletion) * globalIntensity_lower,
-            easeInOutSine(middle_RGBW[2], sides_RGBW[2], currentCompletion) * globalIntensity_lower,
-            easeInOutSine(middle_RGBW[3], sides_RGBW[3], currentCompletion) * globalIntensity_lower);
-          strip_lower.SetPixelColor(i,newColor); */
-          strip_lower.SetPixelColor(i, color);
-      }
-      strip_lower.Show();
+      lower_strip_loop();
   }
 
   if(updateUpper)
   {
       updateUpper = false;
-      for (size_t i = 0; i < RGB_PixelCount; i++)
-      {
-          if(i > 100)
-          {
-              float currentCompletion = ((i-100)*2.0)/50.0;
-              RgbColor newColor(
-                BlynkMathClamp(easeInOutSine(middle_RGB[0], sides_RGB[0], currentCompletion) + (upper_RGB[0] * intensity3),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(middle_RGB[1], sides_RGB[1], currentCompletion) + (upper_RGB[1] * intensity3),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(middle_RGB[2], sides_RGB[2], currentCompletion) + (upper_RGB[2] * intensity3),0,255) * globalIntensity_upper
-              );
-              strip_upper.SetPixelColor(i, newColor);
-          }
-          else if (i > 50)
-          {
-              float currentCompletion = ((i-50)*2.0)/50.0;
-              RgbColor newColor(
-                BlynkMathClamp(easeInOutSine(middle_RGB[0], sides_RGB[0], currentCompletion) + (upper_RGB[0] * intensity2),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(middle_RGB[1], sides_RGB[1], currentCompletion) + (upper_RGB[1] * intensity2),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(middle_RGB[2], sides_RGB[2], currentCompletion) + (upper_RGB[2] * intensity2),0,255) * globalIntensity_upper
-              );
-              strip_upper.SetPixelColor(i, newColor);
-          }
-          else
-          {
-              float currentCompletion = ((i)*2.0)/50.0;
-              RgbColor newColor(
-                BlynkMathClamp(easeInOutSine(middle_RGB[0], sides_RGB[0], currentCompletion) + (upper_RGB[0] * intensity1),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(middle_RGB[1], sides_RGB[1], currentCompletion) + (upper_RGB[1] * intensity1),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(middle_RGB[2], sides_RGB[2], currentCompletion) + (upper_RGB[2] * intensity1),0,255) * globalIntensity_upper
-              );
-              strip_upper.SetPixelColor(i, newColor);
-          }
-      }
-      strip_upper.Show();
+      upper_strip_loop();
   }
   
   button_left.tick();
@@ -534,9 +412,117 @@ void loop()
           previousMillis_right = currentMillis_right;
 
           updateLower = true;
-          globalIntensity_lower = BlynkMathClamp(globalIntensity_lower - 10, 0, 100);
+          lower_global_intensity = BlynkMathClamp(lower_global_intensity - 10, 0, 100);
       }
   }
 
 }
+
+// BLYNK INPUTS
+
+BLYNK_WRITE(V0) // Toggle On/Off - Lower
+{
+    if(param.asInt() == 1)
+    {
+        click_right();
+    }
+}
+
+BLYNK_WRITE(V1) // Save Settings - Lower
+{
+    if(param.asInt() == 1)
+    {
+
+    }
+}
+
+BLYNK_WRITE(V2) // Global Multiplier - Lower
+{
+    if(!lower_on) click_right();
+    lower_global_intensity = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V3) // Color 1 Hue - Lower
+{
+    if(!lower_on) click_right();
+    lower_HSVW_1[0] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V4) // Color 1 Saturation - Lower
+{
+    if(!lower_on) click_right();
+    lower_HSVW_1[1] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V5) // Color 1 Value - Lower
+{
+    if(!lower_on) click_right();
+    lower_HSVW_1[2] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V6) // Color 1 Whiteness - Lower
+{
+    if(!lower_on) click_right();
+    lower_HSVW_1[3] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V7) // Color 2 Hue - Lower
+{
+    if(!lower_on) click_right();
+    lower_HSVW_2[0] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V8) // Color 2 Saturation - Lower
+{
+    if(!lower_on) click_right();
+    lower_HSVW_2[1] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V9) // Color 2 Value - Lower
+{
+    if(!lower_on) click_right();
+    lower_HSVW_2[2] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V10) // Color 2 Whiteness - Lower
+{
+    if(!lower_on) click_right();
+    lower_HSVW_2[3] = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V11) // ColorShift Toggle - Lower
+{
+    if(!lower_on) click_right();
+    if(param.asInt() == 1)
+    {
+
+    }
+    updateLower = true;
+}
+
+BLYNK_WRITE(V12) // ColorShift Duration - Lower
+{
+    if(!lower_on) click_right();
+    lower_colorshift_duration = param.asInt();
+    updateLower = true;
+}
+
+BLYNK_WRITE(V13) // Division Factor - Lower
+{
+    if(!lower_on) click_right();
+    lower_division_factor = pow(2,param.asInt());
+    update_lower_transition();
+    updateLower = true;
+}
+
+// END OF INPUTS
 
