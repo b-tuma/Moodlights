@@ -69,15 +69,18 @@ void connectWiFi()
   }
 }
 
-int lower_HSVW_2[4];
-int lower_HSVW_1[4];
+HsvwColor lower_HSVW_2;
+HsvwColor lower_HSVW_1;
 int lower_global_intensity = 100;
 bool lower_colorshift = false;
-int lower_colorshift_duration = 3000;
+unsigned long lower_colorshift_duration = 3000;
 bool lower_on = true;
 int lower_global_intensity_old;
 int lower_division_factor = 2;
 uint8_t lower_transition_array[RGBW_PixelCount];
+HsvwColor lower_current_1;
+HsvwColor lower_current_2;
+int lower_current_time = 0;
 
 int upper_HSV_1[3];
 int upper_HSV_2[3];
@@ -116,18 +119,18 @@ uint8_t inOutSine8(int position,float duration)
 }
 
 // Based on https://www.alanzucconi.com/2016/01/06/colour-interpolation/
-HsvwColor lerpHSVW(int *startColor, int *endColor, int position)
+HsvwColor lerpHSVW(HsvwColor startColor, HsvwColor endColor, int position)
 {
     // Hue interpolation
     int h = 0;
-    int startHue = startColor[0];
-    int endHue = endColor[0];
+    int startHue = startColor.H;
+    int endHue = endColor.H;
     int distance = endHue - startHue;
     if (startHue > endHue)
     {
         // Swap (startColor Hue, endColor Hue)
-        endHue = startColor[0];
-        startHue = endColor[0];
+        endHue = startColor.H;
+        startHue = endColor.H;
 
         distance = -distance;
         position = 255 - position;
@@ -143,9 +146,9 @@ HsvwColor lerpHSVW(int *startColor, int *endColor, int position)
         h = linearEasingf(position, startHue, distance);
     }
     return HsvwColor(h,
-                    linearEasingf(position,startColor[1],(endColor[1] - startColor[1])),
-                    linearEasingf(position,startColor[2],(endColor[2] - startColor[2]))*lower_global_intensity/100,
-                    linearEasingf(position,startColor[3],(endColor[3] - startColor[3]))*lower_global_intensity/100
+                    linearEasingf(position,startColor.S,(endColor.S - startColor.S)),
+                    linearEasingf(position,startColor.V,(endColor.V - startColor.V)),
+                    linearEasingf(position,startColor.W,(endColor.W - startColor.W))
                     );
 }
 
@@ -306,15 +309,45 @@ void setup()
 
 unsigned long previousMillis_left = 0;
 unsigned long previousMillis_right = 0;
+unsigned long previousMillis_lower = 0;
+bool lower_reverse = false;
 const long interval = 500;  
 
 
 
 void lower_strip_loop()
 {
+    if(lower_colorshift)
+    {
+        unsigned long currentMillis = millis();
+        if(currentMillis - previousMillis_lower > 20)
+        {
+            int counter = constrain(map(currentMillis,previousMillis_lower,previousMillis_lower + lower_colorshift_duration,0,255),0 ,255);
+            if(lower_reverse) counter = 255 - counter;
+            lower_current_1 = lerpHSVW(lower_HSVW_1, lower_HSVW_2, counter);
+            lower_current_2 = lerpHSVW(lower_HSVW_2, lower_HSVW_1, counter);
+            if(counter >= 255)
+            {
+                previousMillis_lower = currentMillis;
+                lower_reverse = true;
+            } 
+            if(counter <= 0)
+            {
+                previousMillis_lower = currentMillis;
+                lower_reverse = false;
+            }
+        }
+    }
+    else
+    {
+        lower_current_1 = lower_HSVW_1;
+        lower_current_2 = lower_HSVW_2;
+    }
     for (size_t i = 0; i < RGBW_PixelCount; i++)
       {
-          HsvwColor hsvwColor = lerpHSVW(lower_HSVW_2, lower_HSVW_1, lower_transition_array[i]);
+          HsvwColor hsvwColor = lerpHSVW(lower_current_1, lower_current_2, lower_transition_array[i]);
+          hsvwColor.V = hsvwColor.V * lower_global_intensity/100;
+          hsvwColor.W = hsvwColor.W * lower_global_intensity/100;
           RgbwColor color = HsvToRgbw(hsvwColor);
           strip_lower.SetPixelColor(i, color);
       }
@@ -375,7 +408,7 @@ void loop()
 
   Blynk.run();
 
-  if(updateLower)
+  if(updateLower || lower_colorshift)
   {
       updateLower = false;
       lower_strip_loop();
@@ -446,56 +479,56 @@ BLYNK_WRITE(V2) // Global Multiplier - Lower
 BLYNK_WRITE(V3) // Color 1 Hue - Lower
 {
     if(!lower_on) click_right();
-    lower_HSVW_1[0] = param.asInt();
+    lower_HSVW_1.H = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V4) // Color 1 Saturation - Lower
 {
     if(!lower_on) click_right();
-    lower_HSVW_1[1] = param.asInt();
+    lower_HSVW_1.S = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V5) // Color 1 Value - Lower
 {
     if(!lower_on) click_right();
-    lower_HSVW_1[2] = param.asInt();
+    lower_HSVW_1.V = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V6) // Color 1 Whiteness - Lower
 {
     if(!lower_on) click_right();
-    lower_HSVW_1[3] = param.asInt();
+    lower_HSVW_1.W = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V7) // Color 2 Hue - Lower
 {
     if(!lower_on) click_right();
-    lower_HSVW_2[0] = param.asInt();
+    lower_HSVW_2.H = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V8) // Color 2 Saturation - Lower
 {
     if(!lower_on) click_right();
-    lower_HSVW_2[1] = param.asInt();
+    lower_HSVW_2.S = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V9) // Color 2 Value - Lower
 {
     if(!lower_on) click_right();
-    lower_HSVW_2[2] = param.asInt();
+    lower_HSVW_2.V = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V10) // Color 2 Whiteness - Lower
 {
     if(!lower_on) click_right();
-    lower_HSVW_2[3] = param.asInt();
+    lower_HSVW_2.W = param.asInt();
     updateLower = true;
 }
 
@@ -504,7 +537,7 @@ BLYNK_WRITE(V11) // ColorShift Toggle - Lower
     if(!lower_on) click_right();
     if(param.asInt() == 1)
     {
-
+        lower_colorshift = !lower_colorshift;
     }
     updateLower = true;
 }
@@ -512,7 +545,7 @@ BLYNK_WRITE(V11) // ColorShift Toggle - Lower
 BLYNK_WRITE(V12) // ColorShift Duration - Lower
 {
     if(!lower_on) click_right();
-    lower_colorshift_duration = param.asInt();
+    lower_colorshift_duration = param.asInt() * 1000;
     updateLower = true;
 }
 
