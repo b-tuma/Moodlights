@@ -26,8 +26,11 @@
 
 const uint16_t RGBW_PixelCount = 44;
 const uint16_t RGB_PixelCount = 150;
+const uint8_t RGB_Rows = 3;
 const uint8_t button_left_pin = 5;
 const uint8_t button_right_pin = 15;
+
+const uint16_t RGB_floor_size = RGB_PixelCount / RGB_Rows;
 
 OneButton button_left(button_left_pin, false);
 OneButton button_right(button_right_pin, false);
@@ -69,26 +72,32 @@ void connectWiFi()
   }
 }
 
-HsvwColor lower_HSVW_2;
-HsvwColor lower_HSVW_1;
+HsvColor lower_HSVW_2;
+HsvColor lower_HSVW_1;
 int lower_global_intensity = 100;
 bool lower_colorshift = false;
 unsigned long lower_colorshift_duration = 3000;
 bool lower_on = true;
-int lower_global_intensity_old;
 int lower_division_factor = 2;
 uint8_t lower_transition_array[RGBW_PixelCount];
-HsvwColor lower_current_1;
-HsvwColor lower_current_2;
+HsvColor lower_current_1;
+HsvColor lower_current_2;
 int lower_current_time = 0;
 
-int upper_HSV_1[3];
-int upper_HSV_2[3];
-int upper_HSV_3[3];
-float intensity1;
-float intensity2;
-float intensity3;
-float globalIntensity_upper = 1.0;
+HsvColor upper_HSV_1;
+HsvColor upper_HSV_2;
+HsvColor upper_HSV_3;
+HsvColor upper_current_HSV_1;
+HsvColor upper_current_HSV_2;
+HsvColor upper_current_HSV_3;
+bool three_color_mode;
+int upper_intensity[RGB_Rows];
+int upper_global_intensity = 100;
+bool upper_colorshift = false;
+unsigned long upper_colorshift_duration = 3000;
+bool upper_on = true;
+uint8_t upper_transition_array[RGB_PixelCount];
+int upper_division_factor = 2;
 bool updateUpper = false;
 
 int middle_RGBW[4];
@@ -119,7 +128,7 @@ uint8_t inOutSine8(int position,float duration)
 }
 
 // Based on https://www.alanzucconi.com/2016/01/06/colour-interpolation/
-HsvwColor lerpHSVW(HsvwColor startColor, HsvwColor endColor, int position)
+HsvColor lerpHSVW(HsvColor startColor, HsvColor endColor, int position, bool noRotate = false)
 {
     // Hue interpolation
     int h = 0;
@@ -136,23 +145,23 @@ HsvwColor lerpHSVW(HsvwColor startColor, HsvwColor endColor, int position)
         position = 255 - position;
     }
 
-    if(distance > 127) // 180deg
+    if(distance > 127 && !noRotate) // 180deg
     {
         startHue = startHue + 255; // 360deg
         h = linearEasingf(position, startHue, (endHue - startHue)) % 255;
     }
-    if(distance <= 127) // 180deg
+    if(distance <= 127 || noRotate) // 180deg
     {
         h = linearEasingf(position, startHue, distance);
     }
-    return HsvwColor(h,
+    return HsvColor(h,
                     linearEasingf(position,startColor.S,(endColor.S - startColor.S)),
                     linearEasingf(position,startColor.V,(endColor.V - startColor.V)),
                     linearEasingf(position,startColor.W,(endColor.W - startColor.W))
                     );
 }
 
-RgbwColor HsvToRgbw(HsvwColor hsvwColor)
+RgbwColor HsvToRgbw(HsvColor hsvwColor)
 {
     unsigned char region, remainder, p, q, t;
 
@@ -185,19 +194,23 @@ RgbwColor HsvToRgbw(HsvwColor hsvwColor)
     }
 }
 
-void click_left()
+RgbColor HsvToRgb(HsvColor hsvColor)
+{
+    RgbwColor rgbwColor = HsvToRgbw(hsvColor);
+    return RgbColor(rgbwColor.R, rgbwColor.G, rgbwColor.B);
+}
+
+void toggle_upper()
 {
     if(isOn_upper)
     {
         isOn_upper = false;
-        old_globalIntensity_upper = globalIntensity_upper;
-        globalIntensity_upper = 0.0;
-        updateUpper = true;
+        strip_upper.ClearTo(RgbColor(0));
+        strip_upper.Show();
     }
     else
     {
         isOn_upper = true;
-        globalIntensity_upper = old_globalIntensity_upper;
         updateUpper = true;
     }
 }
@@ -207,7 +220,7 @@ void doubleClick_left()
     if(isOn_upper)
     {
         updateUpper = true;
-        globalIntensity_upper = BlynkMathClamp(globalIntensity_upper + 0.1, 0.0, 1.0);
+        upper_global_intensity = BlynkMathClamp(upper_global_intensity + 0.1, 0.0, 1.0);
     }
     
 }
@@ -256,19 +269,17 @@ void longEnd_right()
     long_right = false;
 }
 
-void click_right()
+void toggle_lower()
 {
     if(lower_on)
     {
         lower_on = false;
-        lower_global_intensity_old = lower_global_intensity;
-        lower_global_intensity = 0;
-        updateLower = true;
+        strip_lower.ClearTo(RgbwColor(0));
+        strip_lower.Show();
     }
     else
     {
         lower_on = true;
-        lower_global_intensity = lower_global_intensity_old;
         updateLower = true;
     }
 }
@@ -280,6 +291,16 @@ void update_lower_transition()
     {
         uint8_t value = inOutSine8(i, duration);
         lower_transition_array[i] = constrain(value,0,255);
+    }   
+}
+
+void update_upper_transition()
+{
+    float duration = RGB_floor_size/upper_division_factor;
+    for (size_t i = 0; i < RGB_floor_size; i++)
+    {
+        uint8_t value = inOutSine8(i, duration);
+        upper_transition_array[i] = upper_transition_array[RGB_floor_size + i] = upper_transition_array[RGB_floor_size + RGB_floor_size + i] = constrain(value, 0, 255);
     }
     
 }
@@ -296,24 +317,27 @@ void setup()
     strip_upper.Show();
     strip_lower.Begin();
     strip_lower.Show();
-    button_left.attachClick(click_left);
+    button_left.attachClick(toggle_upper);
     button_left.attachDoubleClick(doubleClick_left);
     button_left.attachLongPressStart(longClick_left);
     button_left.attachLongPressStop(longEnd_left);
-    button_right.attachClick(click_right);
+    button_right.attachClick(toggle_lower);
     button_right.attachDoubleClick(doubleClick_right);
     button_right.attachLongPressStart(longClick_right);
     button_right.attachLongPressStop(longEnd_right);
+
+    // First refresh to strip intensity array
     update_lower_transition();
 }
 
 unsigned long previousMillis_left = 0;
 unsigned long previousMillis_right = 0;
 unsigned long previousMillis_lower = 0;
+unsigned long previousMillis_upper = 0;
+bool upper_reverse = false;
 bool lower_reverse = false;
+int upper_transition_step = 0;
 const long interval = 500;  
-
-
 
 void lower_strip_loop()
 {
@@ -345,7 +369,7 @@ void lower_strip_loop()
     }
     for (size_t i = 0; i < RGBW_PixelCount; i++)
       {
-          HsvwColor hsvwColor = lerpHSVW(lower_current_1, lower_current_2, lower_transition_array[i]);
+          HsvColor hsvwColor = lerpHSVW(lower_current_1, lower_current_2, lower_transition_array[i]);
           hsvwColor.V = hsvwColor.V * lower_global_intensity/100;
           hsvwColor.W = hsvwColor.W * lower_global_intensity/100;
           RgbwColor color = HsvToRgbw(hsvwColor);
@@ -356,40 +380,95 @@ void lower_strip_loop()
 
 void upper_strip_loop()
 {
+    if(upper_colorshift)
+    {
+        unsigned long currentMillis = millis();
+        if(currentMillis - previousMillis_upper > 20)
+        {
+            int counter = constrain(map(currentMillis,previousMillis_upper,previousMillis_upper + upper_colorshift_duration,0,255),0 ,255);
+            if(!three_color_mode) // Two Color Mode
+            {
+                if(upper_reverse) counter = 255 - counter;
+                upper_current_HSV_1 = lerpHSVW(upper_HSV_1, upper_HSV_2, counter, true);
+                upper_current_HSV_2 = lerpHSVW(upper_HSV_2, upper_HSV_1, counter, true);
+                if(counter >= 255)
+                {
+                    previousMillis_upper = currentMillis;
+                    upper_reverse = true;
+                } 
+                if(counter <= 0)
+                {
+                    previousMillis_upper = currentMillis;
+                    upper_reverse = false;
+                }
+            }
+            else // Three Color Mode
+            {
+                switch (upper_transition_step)
+                {
+                case 0:
+                    upper_current_HSV_1 = lerpHSVW(upper_HSV_1, upper_HSV_2, counter, true);
+                    upper_current_HSV_2 = lerpHSVW(upper_HSV_2, upper_HSV_3, counter, true);
+                    upper_current_HSV_3 = lerpHSVW(upper_HSV_3, upper_HSV_1, counter, true);
+                    break;
+                case 1:
+                    upper_current_HSV_1 = lerpHSVW(upper_HSV_2, upper_HSV_3, counter, true);
+                    upper_current_HSV_2 = lerpHSVW(upper_HSV_3, upper_HSV_1, counter, true);
+                    upper_current_HSV_3 = lerpHSVW(upper_HSV_1, upper_HSV_2, counter, true);
+                    break;
+                case 2:
+                    upper_current_HSV_1 = lerpHSVW(upper_HSV_3, upper_HSV_1, counter, true);
+                    upper_current_HSV_2 = lerpHSVW(upper_HSV_1, upper_HSV_2, counter, true);
+                    upper_current_HSV_3 = lerpHSVW(upper_HSV_2, upper_HSV_3, counter, true);
+                    break;
+                }
+                if(counter >= 255)
+                {
+                    previousMillis_upper = currentMillis;
+                    upper_transition_step += 1;
+                    if(upper_transition_step >= 3)
+                    {
+                        upper_transition_step = 0;
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+        upper_current_HSV_1 = upper_HSV_1;
+        upper_current_HSV_2 = upper_HSV_2;
+        upper_current_HSV_3 = upper_HSV_3;
+    }
     for (size_t i = 0; i < RGB_PixelCount; i++)
-      {
-          if(i > 100)
-          {
-              float currentCompletion = ((i-100)*2.0)/50.0;
-              RgbColor newColor(
-                BlynkMathClamp(easeInOutSine(upper_HSV_1[0], upper_HSV_2[0], currentCompletion) + (upper_HSV_3[0] * intensity3),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(upper_HSV_1[1], upper_HSV_2[1], currentCompletion) + (upper_HSV_3[1] * intensity3),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(upper_HSV_1[2], upper_HSV_2[2], currentCompletion) + (upper_HSV_3[2] * intensity3),0,255) * globalIntensity_upper
-              );
-              strip_upper.SetPixelColor(i, newColor);
-          }
-          else if (i > 50)
-          {
-              float currentCompletion = ((i-50)*2.0)/50.0;
-              RgbColor newColor(
-                BlynkMathClamp(easeInOutSine(upper_HSV_1[0], upper_HSV_2[0], currentCompletion) + (upper_HSV_3[0] * intensity2),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(upper_HSV_1[1], upper_HSV_2[1], currentCompletion) + (upper_HSV_3[1] * intensity2),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(upper_HSV_1[2], upper_HSV_2[2], currentCompletion) + (upper_HSV_3[2] * intensity2),0,255) * globalIntensity_upper
-              );
-              strip_upper.SetPixelColor(i, newColor);
-          }
-          else
-          {
-              float currentCompletion = ((i)*2.0)/50.0;
-              RgbColor newColor(
-                BlynkMathClamp(easeInOutSine(upper_HSV_1[0], upper_HSV_2[0], currentCompletion) + (upper_HSV_3[0] * intensity1),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(upper_HSV_1[1], upper_HSV_2[1], currentCompletion) + (upper_HSV_3[1] * intensity1),0,255) * globalIntensity_upper,
-                BlynkMathClamp(easeInOutSine(upper_HSV_1[2], upper_HSV_2[2], currentCompletion) + (upper_HSV_3[2] * intensity1),0,255) * globalIntensity_upper
-              );
-              strip_upper.SetPixelColor(i, newColor);
-          }
-      }
-      strip_upper.Show();
+    {
+        // First lerp
+        HsvColor hsvColor = lerpHSVW(upper_current_HSV_1, upper_current_HSV_2, upper_transition_array[i]);
+        
+        // Second lerp
+        int terciary_influence = 0;
+        switch (i)
+        {
+        case 0 ... RGB_floor_size - 1:
+            terciary_influence = upper_intensity[0];
+            break;
+        case RGB_floor_size ... (RGB_floor_size * 2) - 1:
+            terciary_influence = upper_intensity[1];
+            break;
+        default:
+            terciary_influence = upper_intensity[2];
+            break;
+        }
+
+        hsvColor = lerpHSVW(hsvColor, upper_current_HSV_3, terciary_influence);
+
+        // Brightness correction
+        hsvColor.V = hsvColor.V * upper_global_intensity/100;
+
+        RgbColor color = HsvToRgb(hsvColor);
+        strip_upper.SetPixelColor(i, color);
+    }
+    strip_upper.Show();
 }
 
 void loop()
@@ -406,20 +485,24 @@ void loop()
     return;
   }
 
+  // Run Blynk
   Blynk.run();
 
-  if(updateLower || lower_colorshift)
+  // Update Lower Strip
+  if((updateLower || lower_colorshift) && lower_on)
   {
       updateLower = false;
       lower_strip_loop();
   }
 
-  if(updateUpper)
+  // Update Upper Strip
+  if((updateUpper || upper_colorshift) && upper_on)
   {
       updateUpper = false;
       upper_strip_loop();
   }
-  
+
+  // Update buttons
   button_left.tick();
   button_right.tick();
 
@@ -432,7 +515,7 @@ void loop()
           previousMillis_left = currentMillis_left;
 
           updateUpper = true;
-          globalIntensity_upper = BlynkMathClamp(globalIntensity_upper - 0.1, 0.0, 1.0);
+          upper_global_intensity = BlynkMathClamp(upper_global_intensity - 0.1, 0.0, 1.0);
       }
   }
 
@@ -453,88 +536,88 @@ void loop()
 
 // BLYNK INPUTS
 
-BLYNK_WRITE(V0) // Toggle On/Off - Lower
+BLYNK_WRITE(V0) // Save Settings
 {
     if(param.asInt() == 1)
     {
-        click_right();
+
     }
 }
 
-BLYNK_WRITE(V1) // Save Settings - Lower
+BLYNK_WRITE(V1) // Toggle On/Off - Lower
 {
     if(param.asInt() == 1)
     {
-
+        toggle_lower();
     }
 }
 
 BLYNK_WRITE(V2) // Global Multiplier - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_global_intensity = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V3) // Color 1 Hue - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_HSVW_1.H = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V4) // Color 1 Saturation - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_HSVW_1.S = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V5) // Color 1 Value - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_HSVW_1.V = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V6) // Color 1 Whiteness - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_HSVW_1.W = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V7) // Color 2 Hue - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_HSVW_2.H = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V8) // Color 2 Saturation - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_HSVW_2.S = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V9) // Color 2 Value - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_HSVW_2.V = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V10) // Color 2 Whiteness - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_HSVW_2.W = param.asInt();
     updateLower = true;
 }
 
 BLYNK_WRITE(V11) // ColorShift Toggle - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     if(param.asInt() == 1)
     {
         lower_colorshift = !lower_colorshift;
@@ -544,17 +627,156 @@ BLYNK_WRITE(V11) // ColorShift Toggle - Lower
 
 BLYNK_WRITE(V12) // ColorShift Duration - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_colorshift_duration = param.asInt() * 1000;
     updateLower = true;
 }
 
 BLYNK_WRITE(V13) // Division Factor - Lower
 {
-    if(!lower_on) click_right();
+    if(!lower_on) toggle_lower();
     lower_division_factor = pow(2,param.asInt());
     update_lower_transition();
     updateLower = true;
+}
+
+BLYNK_WRITE(V20) // Toggle On/Off - Upper
+{
+    if(param.asInt() == 1)
+    {
+        toggle_upper();
+    }
+}
+
+BLYNK_WRITE(V21) // Global Multiplier - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_global_intensity = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V22) // Color 1 Hue - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_HSV_1.H = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V23) // Color 1 Saturation - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_HSV_1.S = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V24) // Color 1 Value - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_HSV_1.V = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V25) // Color 2 Hue - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_HSV_2.H = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V26) // Color 2 Saturation - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_HSV_2.S = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V27) // Color 2 Value - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_HSV_2.V = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V28) // Color 3 Hue - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_HSV_3.H = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V29) // Color 3 Saturation - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_HSV_3.S = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V30) // Color 3 Value - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_HSV_3.V = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V31) // ColorShift Toggle - Upper
+{
+    if(!upper_on) toggle_upper();
+    if(param.asInt() == 1)
+    {
+        upper_colorshift = !upper_colorshift;
+    }
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V32) // ColorShift Duration - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_colorshift_duration = param.asInt() * 1000;
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V33) // Division Factor - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_division_factor = pow(2,param.asInt());
+    update_upper_transition();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V34) // ColorShift Mode - Upper
+{
+    if(!upper_on) toggle_upper();
+    switch (param.asInt())
+    {
+    case 1: // Two Color
+        three_color_mode = false;
+        break;
+    case 2: // Three Color
+        three_color_mode = true;
+        break;
+    }
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V35) // Intensity 1 - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_intensity[0] = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V36) // Intensity 2 - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_intensity[1] = param.asInt();
+    updateUpper = true;
+}
+
+BLYNK_WRITE(V37) // Intensity 3 - Upper
+{
+    if(!upper_on) toggle_upper();
+    upper_intensity[2] = param.asInt();
+    updateUpper = true;
 }
 
 // END OF INPUTS

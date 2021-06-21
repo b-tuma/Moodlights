@@ -19,14 +19,14 @@
 
 #include <Arduino.h>
 
-struct HsvwColor
+struct HsvColor
 {
-    HsvwColor(int h, int s, int v, int w) :
+    HsvColor(int h, int s, int v, int w) :
         H(h), S(s), V(v), W(w)
     {
     };
 
-    HsvwColor()
+    HsvColor()
     {
     };
 
