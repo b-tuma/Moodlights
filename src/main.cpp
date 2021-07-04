@@ -29,14 +29,7 @@ const uint16_t RGB_PixelCount = 150;
 const uint8_t RGB_Rows = 3;
 const uint8_t button_left_pin = 5;
 const uint8_t button_right_pin = 15;
-
 const uint16_t RGB_floor_size = RGB_PixelCount / RGB_Rows;
-
-OneButton button_left(button_left_pin, false);
-OneButton button_right(button_right_pin, false);
-
-NeoPixelBus<NeoGrbFeature, NeoEsp8266Uart0800KbpsMethod> strip_upper(RGB_PixelCount);
-NeoPixelBus<NeoGrbwFeature, NeoEsp8266Uart1800KbpsMethod> strip_lower(RGBW_PixelCount);
 
 // Sensitive Fields
 const int blynk_custom_port = 8080;
@@ -44,12 +37,6 @@ const char* blynk_custom_domain = "192.168.0.100";
 const char* blynk_auth = "your_blynk_project_authentication_key";
 const char* wifi_ssid = "wifi_SSID";
 const char* wifi_pass = "wifi_Password";
-
-
-float old_globalIntensity_upper;
-
-bool isOn_upper = true;
-
 
 WiFiClient wifiClient;
 
@@ -72,39 +59,7 @@ void connectWiFi()
   }
 }
 
-HsvColor lower_HSVW_2;
-HsvColor lower_HSVW_1;
-int lower_global_intensity = 100;
-bool lower_colorshift = false;
-unsigned long lower_colorshift_duration = 3000;
-bool lower_on = true;
-int lower_division_factor = 2;
-uint8_t lower_transition_array[RGBW_PixelCount];
-HsvColor lower_current_1;
-HsvColor lower_current_2;
-int lower_current_time = 0;
-
-HsvColor upper_HSV_1;
-HsvColor upper_HSV_2;
-HsvColor upper_HSV_3;
-HsvColor upper_current_HSV_1;
-HsvColor upper_current_HSV_2;
-HsvColor upper_current_HSV_3;
-bool three_color_mode;
-int upper_intensity[RGB_Rows];
-int upper_global_intensity = 100;
-bool upper_colorshift = false;
-unsigned long upper_colorshift_duration = 3000;
-bool upper_on = true;
-uint8_t upper_transition_array[RGB_PixelCount];
-int upper_division_factor = 2;
-bool updateUpper = false;
-
-int middle_RGBW[4];
-int sides_RGBW[4];
-
-bool updateLower = false;
-
+// Tweening Functions
 
 int easeInOutSine(int start, int finish, float position)
 {
@@ -126,6 +81,8 @@ uint8_t inOutSine8(int position,float duration)
 {
     return (-127.5 * (cos(PI*position/duration)-1)) + 0.5;
 }
+
+// Color space conversions
 
 // Based on https://www.alanzucconi.com/2016/01/06/colour-interpolation/
 HsvColor lerpHSVW(HsvColor startColor, HsvColor endColor, int position, bool noRotate = false)
@@ -200,101 +157,68 @@ RgbColor HsvToRgb(HsvColor hsvColor)
     return RgbColor(rgbwColor.R, rgbwColor.G, rgbwColor.B);
 }
 
+// Upper Strip functions
+
+NeoPixelBus<NeoGrbFeature, NeoEsp8266Uart0800KbpsMethod> strip_upper(RGB_PixelCount);
+HsvColor upper_HSV_1;
+HsvColor upper_HSV_2;
+HsvColor upper_HSV_3;
+HsvColor upper_current_HSV_1;
+HsvColor upper_current_HSV_2;
+HsvColor upper_current_HSV_3;
+bool upper_on = true;
+bool upper_update = false;
+bool upper_colorshift = false;
+bool three_color_mode = false;
+unsigned int upper_global_intensity = 100;
+unsigned int upper_division_factor = 2;
+unsigned int upper_intensity[RGB_Rows];
+unsigned long upper_colorshift_duration = 3000;
+uint8_t upper_transition_array[RGB_PixelCount];
+
 void toggle_upper()
 {
-    if(isOn_upper)
+    if(upper_on)
     {
-        isOn_upper = false;
+        upper_on = false;
         strip_upper.ClearTo(RgbColor(0));
         strip_upper.Show();
     }
     else
     {
-        isOn_upper = true;
-        updateUpper = true;
+        upper_on = true;
+        upper_update = true;
     }
 }
 
-void doubleClick_left()
+void doubleClick_upper()
 {
-    if(isOn_upper)
+    if(upper_on)
     {
-        updateUpper = true;
-        upper_global_intensity = BlynkMathClamp(upper_global_intensity + 0.1, 0.0, 1.0);
-    }
-    
-}
-
-bool long_left;
-
-void longClick_left()
-{
-    if(isOn_upper)
-    {
-        long_left = true;
+        upper_update = true;
+        upper_global_intensity = BlynkMathClamp(upper_global_intensity + 10, 0, 100);
     }
     
 }
 
-void longEnd_left()
+
+bool hold_upper;
+
+void longClick_upper()
 {
-    long_left = false;
-}
-
-
-
-void doubleClick_right()
-{
-    if(lower_on)
+    if(upper_on)
     {
-        updateLower = true;
-        lower_global_intensity = BlynkMathClamp(lower_global_intensity + 10, 0, 100);
-        
+        hold_upper = true;
     }
     
 }
 
-bool long_right;
-
-void longClick_right()
+void longEnd_upper()
 {
-    if(lower_on)
-    {
-        long_right = true;
-    }
+    hold_upper = false;
 }
 
-void longEnd_right()
-{
-    long_right = false;
-}
-
-void toggle_lower()
-{
-    if(lower_on)
-    {
-        lower_on = false;
-        strip_lower.ClearTo(RgbwColor(0));
-        strip_lower.Show();
-    }
-    else
-    {
-        lower_on = true;
-        updateLower = true;
-    }
-}
-
-void update_lower_transition()
-{
-    float duration = RGBW_PixelCount/lower_division_factor;
-    for (size_t i = 0; i < RGBW_PixelCount; i++)
-    {
-        uint8_t value = inOutSine8(i, duration);
-        lower_transition_array[i] = constrain(value,0,255);
-    }   
-}
-
-void update_upper_transition()
+void generate_upper_transition()
 {
     float duration = RGB_floor_size/upper_division_factor;
     for (size_t i = 0; i < RGB_floor_size; i++)
@@ -305,78 +229,10 @@ void update_upper_transition()
     
 }
 
-void setup()
-{
-    connectWiFi();
 
-    connectBlynk();
-
-    Blynk.begin(wifiClient, blynk_auth);
-    // this resets all the neopixels to an off state
-    strip_upper.Begin();
-    strip_upper.Show();
-    strip_lower.Begin();
-    strip_lower.Show();
-    button_left.attachClick(toggle_upper);
-    button_left.attachDoubleClick(doubleClick_left);
-    button_left.attachLongPressStart(longClick_left);
-    button_left.attachLongPressStop(longEnd_left);
-    button_right.attachClick(toggle_lower);
-    button_right.attachDoubleClick(doubleClick_right);
-    button_right.attachLongPressStart(longClick_right);
-    button_right.attachLongPressStop(longEnd_right);
-
-    // First refresh to strip intensity array
-    update_lower_transition();
-}
-
-unsigned long previousMillis_left = 0;
-unsigned long previousMillis_right = 0;
-unsigned long previousMillis_lower = 0;
+int upper_transition_step = 0;
 unsigned long previousMillis_upper = 0;
 bool upper_reverse = false;
-bool lower_reverse = false;
-int upper_transition_step = 0;
-const long interval = 500;  
-
-void lower_strip_loop()
-{
-    if(lower_colorshift)
-    {
-        unsigned long currentMillis = millis();
-        if(currentMillis - previousMillis_lower > 20)
-        {
-            int counter = constrain(map(currentMillis,previousMillis_lower,previousMillis_lower + lower_colorshift_duration,0,255),0 ,255);
-            if(lower_reverse) counter = 255 - counter;
-            lower_current_1 = lerpHSVW(lower_HSVW_1, lower_HSVW_2, counter);
-            lower_current_2 = lerpHSVW(lower_HSVW_2, lower_HSVW_1, counter);
-            if(counter >= 255)
-            {
-                previousMillis_lower = currentMillis;
-                lower_reverse = true;
-            } 
-            if(counter <= 0)
-            {
-                previousMillis_lower = currentMillis;
-                lower_reverse = false;
-            }
-        }
-    }
-    else
-    {
-        lower_current_1 = lower_HSVW_1;
-        lower_current_2 = lower_HSVW_2;
-    }
-    for (size_t i = 0; i < RGBW_PixelCount; i++)
-      {
-          HsvColor hsvwColor = lerpHSVW(lower_current_1, lower_current_2, lower_transition_array[i]);
-          hsvwColor.V = hsvwColor.V * lower_global_intensity/100;
-          hsvwColor.W = hsvwColor.W * lower_global_intensity/100;
-          RgbwColor color = HsvToRgbw(hsvwColor);
-          strip_lower.SetPixelColor(i, color);
-      }
-      strip_lower.Show();
-}
 
 void upper_strip_loop()
 {
@@ -471,6 +327,148 @@ void upper_strip_loop()
     strip_upper.Show();
 }
 
+// Lower strip functions
+
+NeoPixelBus<NeoGrbwFeature, NeoEsp8266Uart1800KbpsMethod> strip_lower(RGBW_PixelCount);
+HsvColor lower_HSVW_2;
+HsvColor lower_HSVW_1;
+HsvColor lower_current_HSVW_1;
+HsvColor lower_current_HSVW_2;
+bool lower_on = true;
+bool lower_update = false;
+bool lower_colorshift = false;
+unsigned int lower_global_intensity = 100;
+unsigned int lower_division_factor = 2;
+unsigned long lower_colorshift_duration = 3000;
+uint8_t lower_transition_array[RGBW_PixelCount];
+
+void toggle_lower()
+{
+    if(lower_on)
+    {
+        lower_on = false;
+        strip_lower.ClearTo(RgbwColor(0));
+        strip_lower.Show();
+    }
+    else
+    {
+        lower_on = true;
+        lower_update = true;
+    }
+}
+
+void doubleClick_lower()
+{
+    if(lower_on)
+    {
+        lower_update = true;
+        lower_global_intensity = BlynkMathClamp(lower_global_intensity + 10, 0, 100);
+    }
+}
+
+bool hold_lower;
+
+void longClick_lower()
+{
+    if(lower_on)
+    {
+        hold_lower = true;
+    }
+}
+
+void longEnd_lower()
+{
+    hold_lower = false;
+}
+
+void generate_lower_transition()
+{
+    float duration = RGBW_PixelCount/lower_division_factor;
+    for (size_t i = 0; i < RGBW_PixelCount; i++)
+    {
+        uint8_t value = inOutSine8(i, duration);
+        lower_transition_array[i] = constrain(value,0,255);
+    }   
+}
+
+
+unsigned long previousMillis_lower = 0;
+bool lower_reverse = false;
+
+void lower_strip_loop()
+{
+    if(lower_colorshift)
+    {
+        unsigned long currentMillis = millis();
+        if(currentMillis - previousMillis_lower > 20)
+        {
+            int counter = constrain(map(currentMillis,previousMillis_lower,previousMillis_lower + lower_colorshift_duration,0,255),0 ,255);
+            if(lower_reverse) counter = 255 - counter;
+            lower_current_HSVW_1 = lerpHSVW(lower_HSVW_1, lower_HSVW_2, counter);
+            lower_current_HSVW_2 = lerpHSVW(lower_HSVW_2, lower_HSVW_1, counter);
+            if(counter >= 255)
+            {
+                previousMillis_lower = currentMillis;
+                lower_reverse = true;
+            } 
+            if(counter <= 0)
+            {
+                previousMillis_lower = currentMillis;
+                lower_reverse = false;
+            }
+        }
+    }
+    else
+    {
+        lower_current_HSVW_1 = lower_HSVW_1;
+        lower_current_HSVW_2 = lower_HSVW_2;
+    }
+    for (size_t i = 0; i < RGBW_PixelCount; i++)
+      {
+          HsvColor hsvwColor = lerpHSVW(lower_current_HSVW_1, lower_current_HSVW_2, lower_transition_array[i]);
+          hsvwColor.V = hsvwColor.V * lower_global_intensity/100;
+          hsvwColor.W = hsvwColor.W * lower_global_intensity/100;
+          RgbwColor color = HsvToRgbw(hsvwColor);
+          strip_lower.SetPixelColor(i, color);
+      }
+      strip_lower.Show();
+}
+
+
+OneButton button_upper(button_left_pin, false);
+OneButton button_lower(button_right_pin, false);
+
+void setup()
+{
+    connectWiFi();
+
+    connectBlynk();
+
+    Blynk.begin(wifiClient, blynk_auth);
+    // this resets all the neopixels to an off state
+    strip_upper.Begin();
+    strip_upper.Show();
+    strip_lower.Begin();
+    strip_lower.Show();
+    button_upper.attachClick(toggle_upper);
+    button_upper.attachDoubleClick(doubleClick_upper);
+    button_upper.attachLongPressStart(longClick_upper);
+    button_upper.attachLongPressStop(longEnd_upper);
+    button_lower.attachClick(toggle_lower);
+    button_lower.attachDoubleClick(doubleClick_lower);
+    button_lower.attachLongPressStart(longClick_lower);
+    button_lower.attachLongPressStop(longEnd_lower);
+
+    // First refresh to strips intensity array
+    generate_lower_transition();
+    generate_upper_transition();
+}
+
+
+unsigned long previousMillis_button_upper = 0;
+unsigned long previousMillis_button_lower = 0;
+const long interval = 500;  
+
 void loop()
 {
   // Reconnect WiFi
@@ -489,52 +487,54 @@ void loop()
   Blynk.run();
 
   // Update Lower Strip
-  if((updateLower || lower_colorshift) && lower_on)
+  if((lower_update || lower_colorshift) && lower_on)
   {
-      updateLower = false;
+      lower_update = false;
       lower_strip_loop();
   }
 
   // Update Upper Strip
-  if((updateUpper || upper_colorshift) && upper_on)
+  if((upper_update || upper_colorshift) && upper_on)
   {
-      updateUpper = false;
+      upper_update = false;
       upper_strip_loop();
   }
 
   // Update buttons
-  button_left.tick();
-  button_right.tick();
+  button_upper.tick();
+  button_lower.tick();
 
-  if(long_left)
+  if(hold_upper)
   {
-      unsigned long currentMillis_left = millis();
+      unsigned long currentMillis_button_upper = millis();
 
-      if(currentMillis_left - previousMillis_left >= interval)
+      if(currentMillis_button_upper - previousMillis_button_upper >= interval)
       {
-          previousMillis_left = currentMillis_left;
+          previousMillis_button_upper = currentMillis_button_upper;
 
-          updateUpper = true;
-          upper_global_intensity = BlynkMathClamp(upper_global_intensity - 0.1, 0.0, 1.0);
+          upper_update = true;
+          upper_global_intensity = BlynkMathClamp(upper_global_intensity - 10, 0, 100);
       }
   }
 
-  if(long_right)
+  if(hold_lower)
   {
-      unsigned long currentMillis_right = millis();
+      unsigned long currentMillis_button_lower = millis();
 
-      if(currentMillis_right - previousMillis_right >= interval)
+      if(currentMillis_button_lower - previousMillis_button_lower >= interval)
       {
-          previousMillis_right = currentMillis_right;
+          previousMillis_button_lower = currentMillis_button_lower;
 
-          updateLower = true;
+          lower_update = true;
           lower_global_intensity = BlynkMathClamp(lower_global_intensity - 10, 0, 100);
       }
   }
 
 }
 
+
 // BLYNK INPUTS
+#pragma region Blynk Inputs
 
 BLYNK_WRITE(V0) // Save Settings
 {
@@ -556,63 +556,63 @@ BLYNK_WRITE(V2) // Global Multiplier - Lower
 {
     if(!lower_on) toggle_lower();
     lower_global_intensity = param.asInt();
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V3) // Color 1 Hue - Lower
 {
     if(!lower_on) toggle_lower();
     lower_HSVW_1.H = param.asInt();
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V4) // Color 1 Saturation - Lower
 {
     if(!lower_on) toggle_lower();
     lower_HSVW_1.S = param.asInt();
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V5) // Color 1 Value - Lower
 {
     if(!lower_on) toggle_lower();
     lower_HSVW_1.V = param.asInt();
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V6) // Color 1 Whiteness - Lower
 {
     if(!lower_on) toggle_lower();
     lower_HSVW_1.W = param.asInt();
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V7) // Color 2 Hue - Lower
 {
     if(!lower_on) toggle_lower();
     lower_HSVW_2.H = param.asInt();
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V8) // Color 2 Saturation - Lower
 {
     if(!lower_on) toggle_lower();
     lower_HSVW_2.S = param.asInt();
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V9) // Color 2 Value - Lower
 {
     if(!lower_on) toggle_lower();
     lower_HSVW_2.V = param.asInt();
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V10) // Color 2 Whiteness - Lower
 {
     if(!lower_on) toggle_lower();
     lower_HSVW_2.W = param.asInt();
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V11) // ColorShift Toggle - Lower
@@ -622,22 +622,22 @@ BLYNK_WRITE(V11) // ColorShift Toggle - Lower
     {
         lower_colorshift = !lower_colorshift;
     }
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V12) // ColorShift Duration - Lower
 {
     if(!lower_on) toggle_lower();
     lower_colorshift_duration = param.asInt() * 1000;
-    updateLower = true;
+    lower_update = true;
 }
 
 BLYNK_WRITE(V13) // Division Factor - Lower
 {
     if(!lower_on) toggle_lower();
     lower_division_factor = pow(2,param.asInt());
-    update_lower_transition();
-    updateLower = true;
+    generate_lower_transition();
+    lower_update = true;
 }
 
 BLYNK_WRITE(V20) // Toggle On/Off - Upper
@@ -652,70 +652,70 @@ BLYNK_WRITE(V21) // Global Multiplier - Upper
 {
     if(!upper_on) toggle_upper();
     upper_global_intensity = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V22) // Color 1 Hue - Upper
 {
     if(!upper_on) toggle_upper();
     upper_HSV_1.H = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V23) // Color 1 Saturation - Upper
 {
     if(!upper_on) toggle_upper();
     upper_HSV_1.S = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V24) // Color 1 Value - Upper
 {
     if(!upper_on) toggle_upper();
     upper_HSV_1.V = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V25) // Color 2 Hue - Upper
 {
     if(!upper_on) toggle_upper();
     upper_HSV_2.H = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V26) // Color 2 Saturation - Upper
 {
     if(!upper_on) toggle_upper();
     upper_HSV_2.S = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V27) // Color 2 Value - Upper
 {
     if(!upper_on) toggle_upper();
     upper_HSV_2.V = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V28) // Color 3 Hue - Upper
 {
     if(!upper_on) toggle_upper();
     upper_HSV_3.H = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V29) // Color 3 Saturation - Upper
 {
     if(!upper_on) toggle_upper();
     upper_HSV_3.S = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V30) // Color 3 Value - Upper
 {
     if(!upper_on) toggle_upper();
     upper_HSV_3.V = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V31) // ColorShift Toggle - Upper
@@ -725,22 +725,22 @@ BLYNK_WRITE(V31) // ColorShift Toggle - Upper
     {
         upper_colorshift = !upper_colorshift;
     }
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V32) // ColorShift Duration - Upper
 {
     if(!upper_on) toggle_upper();
     upper_colorshift_duration = param.asInt() * 1000;
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V33) // Division Factor - Upper
 {
     if(!upper_on) toggle_upper();
     upper_division_factor = pow(2,param.asInt());
-    update_upper_transition();
-    updateUpper = true;
+    generate_upper_transition();
+    upper_update = true;
 }
 
 BLYNK_WRITE(V34) // ColorShift Mode - Upper
@@ -755,29 +755,29 @@ BLYNK_WRITE(V34) // ColorShift Mode - Upper
         three_color_mode = true;
         break;
     }
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V35) // Intensity 1 - Upper
 {
     if(!upper_on) toggle_upper();
     upper_intensity[0] = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V36) // Intensity 2 - Upper
 {
     if(!upper_on) toggle_upper();
     upper_intensity[1] = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
 BLYNK_WRITE(V37) // Intensity 3 - Upper
 {
     if(!upper_on) toggle_upper();
     upper_intensity[2] = param.asInt();
-    updateUpper = true;
+    upper_update = true;
 }
 
+#pragma endregion Blynk Inputs
 // END OF INPUTS
-
