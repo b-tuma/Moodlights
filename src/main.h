@@ -21,7 +21,7 @@
 
 struct HsvColor
 {
-    HsvColor(int h, int s, int v, int w) :
+    HsvColor(uint8_t h, uint8_t s, uint8_t v, uint8_t w) :
         H(h), S(s), V(v), W(w)
     {
     };
@@ -30,9 +30,9 @@ struct HsvColor
     {
     };
 
-    int H;
-    int S;
-    int V;
-    int W;
+    uint8_t H;
+    uint8_t S;
+    uint8_t V;
+    uint8_t W;
 };
 

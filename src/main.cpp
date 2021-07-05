@@ -23,7 +23,9 @@
 #include <ESP8266WiFi.h>
 #include <math.h>
 #include <main.h>
+#include <EEPROM.h>
 
+const uint8_t EEPROM_size = 0x1C + 1;
 const uint16_t RGBW_PixelCount = 44;
 const uint16_t RGB_PixelCount = 150;
 const uint8_t RGB_Rows = 3;
@@ -160,20 +162,20 @@ RgbColor HsvToRgb(HsvColor hsvColor)
 // Upper Strip functions
 
 NeoPixelBus<NeoGrbFeature, NeoEsp8266Uart0800KbpsMethod> strip_upper(RGB_PixelCount);
-HsvColor upper_HSV_1;
-HsvColor upper_HSV_2;
-HsvColor upper_HSV_3;
+HsvColor upper_HSV_1; // H: 0x00, S: 0x01, V: 0x02
+HsvColor upper_HSV_2; // H: 0x03, S: 0x04, V: 0x05
+HsvColor upper_HSV_3; // H: 0x06, S: 0x07, V: 0x08
 HsvColor upper_current_HSV_1;
 HsvColor upper_current_HSV_2;
 HsvColor upper_current_HSV_3;
-bool upper_on = true;
+bool upper_on = false;
 bool upper_update = false;
-bool upper_colorshift = false;
-bool three_color_mode = false;
-unsigned int upper_global_intensity = 100;
-unsigned int upper_division_factor = 2;
-unsigned int upper_intensity[RGB_Rows];
-unsigned long upper_colorshift_duration = 3000;
+bool upper_colorshift = false; // 0x09
+bool three_color_mode = false; // 0x0A
+unsigned int upper_global_intensity = 100; // 0x0B
+unsigned int upper_division_factor = 2; // 0x0C
+unsigned int upper_intensity[RGB_Rows]; // 0: 0x0D, 1: 0x0E, 2: 0x0F
+unsigned long upper_colorshift_duration = 3000; // 0x10 (divide by 1000)
 uint8_t upper_transition_array[RGB_PixelCount];
 
 void toggle_upper()
@@ -210,7 +212,6 @@ void longClick_upper()
     {
         hold_upper = true;
     }
-    
 }
 
 void longEnd_upper()
@@ -226,7 +227,6 @@ void generate_upper_transition()
         uint8_t value = inOutSine8(i, duration);
         upper_transition_array[i] = upper_transition_array[RGB_floor_size + i] = upper_transition_array[RGB_floor_size + RGB_floor_size + i] = constrain(value, 0, 255);
     }
-    
 }
 
 
@@ -330,16 +330,16 @@ void upper_strip_loop()
 // Lower strip functions
 
 NeoPixelBus<NeoGrbwFeature, NeoEsp8266Uart1800KbpsMethod> strip_lower(RGBW_PixelCount);
-HsvColor lower_HSVW_2;
-HsvColor lower_HSVW_1;
+HsvColor lower_HSVW_1; // H: 0x11, S: 0x12, V: 0x13, W: 0x14
+HsvColor lower_HSVW_2; // H: 0x15, S: 0x16, V: 0x17, W: 0x18
 HsvColor lower_current_HSVW_1;
 HsvColor lower_current_HSVW_2;
-bool lower_on = true;
+bool lower_on = false;
 bool lower_update = false;
-bool lower_colorshift = false;
-unsigned int lower_global_intensity = 100;
-unsigned int lower_division_factor = 2;
-unsigned long lower_colorshift_duration = 3000;
+bool lower_colorshift = false; // 0x19
+unsigned int lower_global_intensity = 100; // 0x1A
+unsigned int lower_division_factor = 2; // 0x1B
+unsigned long lower_colorshift_duration = 3000; // 0x1C (divide by 1000)
 uint8_t lower_transition_array[RGBW_PixelCount];
 
 void toggle_lower()
@@ -434,6 +434,73 @@ void lower_strip_loop()
       strip_lower.Show();
 }
 
+void load_params()
+{
+    EEPROM.begin(EEPROM_size);
+    upper_HSV_1 = HsvColor(EEPROM.read(0x00),EEPROM.read(0x01),EEPROM.read(0x02),0);
+    upper_HSV_2 = HsvColor(EEPROM.read(0x03),EEPROM.read(0x04),EEPROM.read(0x05),0);
+    upper_HSV_3 = HsvColor(EEPROM.read(0x06),EEPROM.read(0x07),EEPROM.read(0x08),0);
+    upper_colorshift = EEPROM.read(0x09);
+    three_color_mode = EEPROM.read(0x0A);
+    upper_global_intensity = EEPROM.read(0x0B);
+    upper_division_factor = EEPROM.read(0x0C);
+    upper_intensity[0] = EEPROM.read(0x0D);
+    upper_intensity[1] = EEPROM.read(0x0E);
+    upper_intensity[2] = EEPROM.read(0x0F);
+    upper_colorshift_duration = EEPROM.read(0x10) * 1000;
+
+    lower_HSVW_1 = HsvColor(EEPROM.read(0x11),EEPROM.read(0x12),EEPROM.read(0x13),EEPROM.read(0x14));
+    lower_HSVW_2 = HsvColor(EEPROM.read(0x15),EEPROM.read(0x16),EEPROM.read(0x17),EEPROM.read(0x18));
+    lower_colorshift = EEPROM.read(0x19);
+    lower_global_intensity = EEPROM.read(0x1A);
+    lower_division_factor = EEPROM.read(0x1B);
+    lower_colorshift_duration = EEPROM.read(0x1C) * 1000;
+    EEPROM.end();
+}
+
+void eeprom_write(int value, int address)
+{
+    if(value != EEPROM.read(address))
+    {
+        EEPROM.write(address, value);
+    }
+}
+
+void save_params()
+{
+    EEPROM.begin(EEPROM_size);
+    eeprom_write(upper_HSV_1.H, 0x00);
+    eeprom_write(upper_HSV_1.S, 0x01);
+    eeprom_write(upper_HSV_1.V, 0x02);
+    eeprom_write(upper_HSV_2.H, 0x03);
+    eeprom_write(upper_HSV_2.S, 0x04);
+    eeprom_write(upper_HSV_2.V, 0x05);
+    eeprom_write(upper_HSV_3.H, 0x06);
+    eeprom_write(upper_HSV_3.S, 0x07);
+    eeprom_write(upper_HSV_3.V, 0x08);
+    eeprom_write(upper_colorshift, 0x09);
+    eeprom_write(three_color_mode, 0x0A);
+    eeprom_write(upper_global_intensity, 0x0B);
+    eeprom_write(upper_division_factor, 0x0C);
+    eeprom_write(upper_intensity[0], 0x0D);
+    eeprom_write(upper_intensity[1], 0x0E);
+    eeprom_write(upper_intensity[2], 0x0F);
+    eeprom_write(upper_colorshift_duration/1000,0x10);
+    eeprom_write(lower_HSVW_1.H, 0x11);
+    eeprom_write(lower_HSVW_1.S, 0x12);
+    eeprom_write(lower_HSVW_1.V, 0x13);
+    eeprom_write(lower_HSVW_1.W, 0x14);
+    eeprom_write(lower_HSVW_2.H, 0x15);
+    eeprom_write(lower_HSVW_2.S, 0x16);
+    eeprom_write(lower_HSVW_2.V, 0x17);
+    eeprom_write(lower_HSVW_2.W, 0x18);
+    eeprom_write(lower_colorshift, 0x19);
+    eeprom_write(lower_global_intensity, 0x1A);
+    eeprom_write(lower_division_factor, 0x1B);
+    eeprom_write(lower_colorshift_duration/1000,0x1C);
+    EEPROM.end();
+}
+
 
 OneButton button_upper(button_left_pin, false);
 OneButton button_lower(button_right_pin, false);
@@ -458,6 +525,8 @@ void setup()
     button_lower.attachDoubleClick(doubleClick_lower);
     button_lower.attachLongPressStart(longClick_lower);
     button_lower.attachLongPressStop(longEnd_lower);
+
+    load_params();
 
     // First refresh to strips intensity array
     generate_lower_transition();
@@ -540,7 +609,7 @@ BLYNK_WRITE(V0) // Save Settings
 {
     if(param.asInt() == 1)
     {
-
+        save_params();
     }
 }
 
